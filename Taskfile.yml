@@ -225,11 +225,6 @@ tasks:
         exec python3 -m pytest test_chartify.py $opts
     silent: true
 
-  test:
-    desc: Alias for unittest
-    cmds:
-      - task: unittest
-
   smoke:
     desc: Generate a small chart natively to confirm the engine works
     cmds:

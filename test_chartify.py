@@ -15,7 +15,7 @@ Rendering is exercised for invariants (size, page count, determinism)
 rather than pixel-compared: the reference-image approach would break on
 every font or Pillow upgrade without indicating a real fault.
 
-Run with:  task test
+Run with:  task unittest
 """
 
 from __future__ import annotations

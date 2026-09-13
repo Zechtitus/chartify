@@ -96,7 +96,7 @@ when fontTools is present.
 
 ## Testing
 
-`task unittest` (or `task test`). 63 tests: ~12s across 12 cores, ~32s
+`task unittest`. 63 tests: ~12s across 12 cores, ~32s
 serial. Every test name is printed, with the five slowest summarised.
 
 Parallelism comes from pytest-xdist (`sudo apt install
