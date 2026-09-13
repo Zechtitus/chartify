@@ -1,0 +1,200 @@
+# Chartify — cross-stitch chart generator.
+#
+# Two front ends over one engine (chartify.py):
+#   * the CLI, run natively        -> task chart -- "angel.jpg --colors 40"
+#   * the web page, Python in WASM -> task serve
+#
+# `task --list` shows everything below.
+version: '3'
+
+vars:
+  WEB_DIR: web
+  PORT: '8000'
+  # Everything the static site needs. chartify.py and dmc_colors.py live in
+  # web/ as symlinks to the root copies, so there is one source of truth.
+  DIST: dist
+
+tasks:
+
+  default:
+    desc: Show the available tasks
+    cmds:
+      - task --list
+    silent: true
+
+  # ----------------------------------------------------------------- web
+
+  serve:
+    desc: Start the web app and open it in a browser
+    summary: |
+      Serves web/ over http://localhost:{{.PORT}} and opens it.
+
+      A plain file:// open will NOT work: the page uses a web worker and
+      fetches the Python sources, both of which need a real HTTP origin.
+
+      Override the port with:  task serve PORT=9000
+    deps: [check-assets]
+    cmds:
+      - |
+        echo "Chartify → http://localhost:{{.PORT}}"
+        echo "First run downloads ~19MB of Python runtime, then it's cached."
+        echo "Ctrl-C to stop."
+        echo
+        # Open the browser once the server is actually accepting connections.
+        (
+          for _ in $(seq 1 40); do
+            if curl -s -o /dev/null "http://localhost:{{.PORT}}/index.html"; then
+              (xdg-open "http://localhost:{{.PORT}}/index.html" >/dev/null 2>&1 || true) &
+              break
+            fi
+            sleep 0.25
+          done
+        ) &
+        cd {{.WEB_DIR}} && python3 -m http.server {{.PORT}}
+
+  serve-only:
+    desc: Start the web server without opening a browser
+    deps: [check-assets]
+    cmds:
+      - echo "Chartify → http://localhost:{{.PORT}}  (Ctrl-C to stop)"
+      - cd {{.WEB_DIR}} && python3 -m http.server {{.PORT}}
+
+  check-assets:
+    desc: Verify the web app has everything it needs to run
+    internal: true
+    cmds:
+      - |
+        missing=0
+        for f in index.html worker.js chartify.py dmc_colors.py \
+                 vendor/DejaVuSansMono-Bold.ttf; do
+          if [ ! -e "{{.WEB_DIR}}/$f" ]; then
+            echo "MISSING: {{.WEB_DIR}}/$f" >&2
+            missing=1
+          fi
+        done
+        if [ "$missing" -ne 0 ]; then
+          echo >&2
+          echo "Run 'task fix-links' to restore the symlinked sources." >&2
+          exit 1
+        fi
+    silent: true
+
+  fix-links:
+    desc: Re-create web/ symlinks to chartify.py and dmc_colors.py
+    cmds:
+      - ln -sfn ../chartify.py {{.WEB_DIR}}/chartify.py
+      - ln -sfn ../dmc_colors.py {{.WEB_DIR}}/dmc_colors.py
+      - echo "relinked."
+
+  # ----------------------------------------------------------------- cli
+
+  chart:
+    desc: 'Run the CLI: task chart -- "angel.jpg --colors 40 --width-stitches 200"'
+    summary: |
+      Passes everything after -- straight to chartify.py.
+
+        task chart -- "angel.jpg --width-stitches 200 --colors 60"
+        task chart -- --help
+
+      With no arguments it drops into the interactive prompts.
+    cmds:
+      - python3 chartify.py {{.CLI_ARGS}}
+
+  # ---------------------------------------------------------------- dist
+
+  build:
+    desc: Assemble a self-contained static site in dist/ ready to upload
+    summary: |
+      Copies web/ into dist/, resolving the symlinks into real files so the
+      output works on any static host (S3, Netlify, GitHub Pages, nginx).
+    cmds:
+      - rm -rf {{.DIST}}
+      - mkdir -p {{.DIST}}/vendor
+      # -L dereferences the symlinked Python sources into real files.
+      - cp -L {{.WEB_DIR}}/index.html {{.WEB_DIR}}/worker.js {{.DIST}}/
+      - cp -L {{.WEB_DIR}}/chartify.py {{.WEB_DIR}}/dmc_colors.py {{.DIST}}/
+      - cp -L {{.WEB_DIR}}/favicon.png {{.DIST}}/ 2>/dev/null || true
+      - cp -L {{.WEB_DIR}}/vendor/DejaVuSansMono-Bold.ttf {{.DIST}}/vendor/
+      - |
+        echo
+        echo "dist/ is ready to upload:"
+        du -sh {{.DIST}}
+        find {{.DIST}} -type f | sort | sed 's/^/  /'
+        echo
+        echo "Serve it locally with: task preview"
+
+  preview:
+    desc: Serve the built dist/ folder, to check it before uploading
+    deps: [build]
+    cmds:
+      - echo "dist/ → http://localhost:{{.PORT}}  (Ctrl-C to stop)"
+      - cd {{.DIST}} && python3 -m http.server {{.PORT}}
+
+  publish:
+    desc: Commit and push, which triggers the GitHub Pages deploy
+    summary: |
+      Pushes to main. The .github/workflows/pages.yml workflow then builds
+      and publishes the site, so there is nothing to upload by hand.
+
+      First-time setup is in README.md (create the repo, then switch
+      Settings → Pages → Source to "GitHub Actions").
+    cmds:
+      - |
+        if [ ! -d .git ]; then
+          echo "Not a git repo yet — see the hosting section of README.md." >&2
+          exit 1
+        fi
+        git add -A
+        if git diff --cached --quiet; then
+          echo "nothing to commit."
+        else
+          git commit -m "${MSG:-Update Chartify web app}"
+        fi
+        branch=$(git rev-parse --abbrev-ref HEAD)
+        git push origin "$branch"
+        echo
+        echo "Pushed. Watch the deploy under the repo's Actions tab."
+
+  clean:
+    desc: Remove dist/ and generated chart folders
+    prompt: Delete dist/ and every *-chart-* output folder?
+    cmds:
+      - rm -rf {{.DIST}}
+      - find . -maxdepth 1 -type d -name '*-chart-*' -exec rm -rf {} +
+      - echo "cleaned."
+
+  # ---------------------------------------------------------------- test
+
+  deps:
+    desc: Check the Python packages the CLI needs are installed
+    cmds:
+      - |
+        python3 - <<'PY'
+        missing = []
+        for mod, pkg in (("numpy","numpy"), ("PIL","Pillow"), ("fontTools","fonttools")):
+            try:
+                __import__(mod)
+            except ImportError:
+                missing.append(pkg)
+        if missing:
+            print("missing:", " ".join(missing))
+            print("install with: pip install " + " ".join(missing))
+            raise SystemExit(1)
+        import numpy, PIL
+        print("numpy", numpy.__version__, "| Pillow", PIL.__version__, "— ok")
+        PY
+    silent: true
+
+  smoke:
+    desc: Generate a small chart natively to confirm the engine works
+    cmds:
+      - |
+        img=$(ls -1 *.jpg *.jpeg *.png 2>/dev/null | head -1)
+        if [ -z "$img" ]; then echo "no image in this folder to test with" >&2; exit 1; fi
+        out=$(mktemp -d)
+        echo "charting $img → $out"
+        python3 chartify.py "$img" --width-stitches 60 --colors 12 -o "$out" --format pdf
+        echo
+        ls -la "$out"
+        rm -rf "$out"
+    silent: true

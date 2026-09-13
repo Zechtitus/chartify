@@ -1,0 +1,75 @@
+# Publish the Chartify web app to GitHub Pages.
+#
+# The site is fully static: the chart engine (chartify.py) is fetched by the
+# browser and run in WebAssembly, so there is nothing to build or compile --
+# this workflow just assembles web/ into an uploadable folder.
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    # Only redeploy when something the site actually serves changes.
+    paths:
+      - 'web/**'
+      - 'chartify.py'
+      - 'dmc_colors.py'
+      - '.github/workflows/pages.yml'
+  # Lets you deploy by hand from the Actions tab.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race; keep the newest.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble the static site
+        run: |
+          set -euo pipefail
+          mkdir -p dist/vendor
+          # -L turns the web/ symlinks into real files. Pages does not follow
+          # symlinks, so copying them verbatim would publish broken links.
+          cp -L web/index.html web/worker.js dist/
+          cp -L web/chartify.py web/dmc_colors.py dist/
+          cp -L web/favicon.png dist/
+          cp -L web/vendor/DejaVuSansMono-Bold.ttf dist/vendor/
+          # Jekyll would otherwise ignore some files and rewrite others.
+          touch dist/.nojekyll
+
+      - name: Verify nothing is missing or still a symlink
+        run: |
+          set -euo pipefail
+          for f in index.html worker.js chartify.py dmc_colors.py \
+                   favicon.png vendor/DejaVuSansMono-Bold.ttf; do
+            test -f "dist/$f" || { echo "missing dist/$f" >&2; exit 1; }
+          done
+          if [ -n "$(find dist -type l)" ]; then
+            echo "unresolved symlink in dist/" >&2; exit 1
+          fi
+          echo "site contents:"
+          find dist -type f | sort | sed 's/^/  /'
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

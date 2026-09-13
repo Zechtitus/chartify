@@ -1,0 +1,925 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chartify — Cross-Stitch Chart Maker</title>
+<link rel="icon" href="favicon.png" type="image/png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,900;1,9..144,400&family=Courier+Prime:wght@400;700&display=swap" rel="stylesheet">
+<style>
+/* ---------------------------------------------------------------------
+   Palette taken from real DMC stranded cotton, the same thread data the
+   charts are matched against: Ecru paper, 3371 Black Brown ink,
+   816 Garnet accent, 729 Old Gold highlight, 3364 Pine Green, 311 Navy.
+   --------------------------------------------------------------------- */
+:root {
+  --paper:      #f0eada;   /* DMC Ecru */
+  --paper-deep: #e4dcc6;
+  --ink:        #1e1108;   /* DMC 3371 Black Brown */
+  --ink-soft:   #5c4b3a;
+  --ink-faint:  #8a7660;
+  --garnet:     #970b23;   /* DMC 816 */
+  --gold:       #d0a53e;   /* DMC 729 */
+  --pine:       #83975f;   /* DMC 3364 */
+  --navy:       #1c5066;   /* DMC 311 */
+  --rule:       #c9bea4;
+  --grid:       rgba(30, 17, 8, 0.07);
+  --grid-bold:  rgba(30, 17, 8, 0.16);
+  --card:       #f7f3e8;
+  --shadow:     rgba(30, 17, 8, 0.18);
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background-color: var(--paper);
+  color: var(--ink);
+  font-family: "Fraunces", Georgia, "Times New Roman", serif;
+  font-optical-sizing: auto;
+  line-height: 1.55;
+  /* The chart grid itself as ground texture: 10x10 fine cells to a bold
+     block, exactly the geometry the printed pages use. */
+  background-image:
+    linear-gradient(var(--grid-bold) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-bold) 1px, transparent 1px),
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 120px 120px, 120px 120px, 12px 12px, 12px 12px;
+  background-position: -1px -1px, -1px -1px, -1px -1px, -1px -1px;
+  min-height: 100vh;
+}
+
+/* Faint paper grain over the grid so it reads as printed stock. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.35;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+}
+
+.wrap {
+  position: relative;
+  z-index: 1;
+  max-width: 1060px;
+  margin: 0 auto;
+  padding: clamp(1.5rem, 4vw, 3.5rem) clamp(1.1rem, 4vw, 2rem) 5rem;
+}
+
+/* ------------------------------ masthead ------------------------------ */
+
+header { margin-bottom: 2.5rem; }
+
+.eyebrow {
+  font-family: "Courier Prime", ui-monospace, monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  color: var(--garnet);
+  margin: 0 0 0.9rem;
+}
+
+h1 {
+  font-size: clamp(2.9rem, 9vw, 5.4rem);
+  font-weight: 900;
+  line-height: 0.92;
+  letter-spacing: -0.025em;
+  margin: 0;
+}
+
+/* The one deliberately loud move: the X of a cross-stitch, set as a
+   glyph-like mark beside the title. */
+h1 .x {
+  color: var(--garnet);
+  font-style: italic;
+  font-weight: 400;
+}
+
+.lede {
+  max-width: 46ch;
+  margin: 1.1rem 0 0;
+  font-size: clamp(1rem, 2.4vw, 1.16rem);
+  color: var(--ink-soft);
+}
+
+.lede strong { color: var(--ink); font-weight: 600; }
+
+.masthead-rule {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1.8rem;
+}
+.masthead-rule .line { flex: 1; height: 2px; background: var(--ink); }
+.masthead-rule .sw {
+  width: 13px; height: 13px;
+  border: 1.5px solid var(--ink);
+}
+
+/* ------------------------------- layout ------------------------------- */
+
+.cols {
+  display: grid;
+  grid-template-columns: 1.15fr 0.85fr;
+  gap: clamp(1.2rem, 3vw, 2.2rem);
+  align-items: start;
+}
+
+@media (max-width: 820px) {
+  .cols { grid-template-columns: 1fr; }
+}
+
+.card {
+  background: var(--card);
+  border: 1.5px solid var(--ink);
+  box-shadow: 6px 6px 0 var(--shadow);
+  padding: clamp(1.15rem, 3vw, 1.75rem);
+}
+
+.card + .card { margin-top: 1.4rem; }
+
+.card h2 {
+  font-family: "Courier Prime", ui-monospace, monospace;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: 0 0 1.2rem;
+  padding-bottom: 0.6rem;
+  border-bottom: 1px dashed var(--rule);
+}
+
+/* ------------------------------- dropzone ------------------------------ */
+
+.drop {
+  position: relative;
+  border: 2px dashed var(--rule);
+  background: rgba(255, 255, 255, 0.4);
+  padding: 2.2rem 1.2rem;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.18s, background 0.18s, transform 0.18s;
+}
+
+.drop:hover, .drop:focus-visible {
+  border-color: var(--garnet);
+  background: rgba(255, 255, 255, 0.72);
+  outline: none;
+}
+
+.drop.over {
+  border-color: var(--garnet);
+  background: rgba(151, 11, 35, 0.06);
+  transform: scale(0.995);
+}
+
+.drop.has-file { border-style: solid; border-color: var(--pine); }
+
+.drop-icon {
+  font-family: "Courier Prime", monospace;
+  font-size: 1.7rem;
+  color: var(--ink-faint);
+  letter-spacing: 0.1em;
+  display: block;
+  margin-bottom: 0.5rem;
+}
+
+.drop-main { font-weight: 600; font-size: 1.02rem; }
+
+.drop-sub {
+  font-family: "Courier Prime", monospace;
+  font-size: 0.74rem;
+  color: var(--ink-faint);
+  margin-top: 0.35rem;
+  letter-spacing: 0.04em;
+}
+
+.drop input[type=file] { display: none; }
+
+.thumb-row {
+  display: none;
+  align-items: center;
+  gap: 0.9rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px dashed var(--rule);
+  text-align: left;
+}
+.thumb-row.show { display: flex; }
+
+.thumb-row img {
+  width: 72px; height: 72px;
+  object-fit: cover;
+  border: 1.5px solid var(--ink);
+  flex: 0 0 auto;
+}
+
+.thumb-meta { min-width: 0; }
+.thumb-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.thumb-dims {
+  font-family: "Courier Prime", monospace;
+  font-size: 0.76rem;
+  color: var(--ink-faint);
+}
+
+/* -------------------------------- fields ------------------------------- */
+
+.field { margin-bottom: 1.5rem; }
+.field:last-child { margin-bottom: 0; }
+
+.field-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+label {
+  font-weight: 600;
+  font-size: 0.97rem;
+}
+
+.readout {
+  font-family: "Courier Prime", monospace;
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: var(--garnet);
+  font-variant-numeric: tabular-nums;
+}
+
+.hint {
+  font-size: 0.8rem;
+  color: var(--ink-faint);
+  margin-top: 0.45rem;
+  line-height: 1.45;
+}
+
+input[type=range] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 22px;
+  background: transparent;
+  cursor: pointer;
+  margin: 0;
+}
+input[type=range]::-webkit-slider-runnable-track {
+  height: 3px;
+  background: var(--ink);
+}
+input[type=range]::-moz-range-track {
+  height: 3px;
+  background: var(--ink);
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 15px; height: 15px;
+  margin-top: -6px;
+  background: var(--garnet);
+  border: 1.5px solid var(--ink);
+  border-radius: 0;
+}
+input[type=range]::-moz-range-thumb {
+  width: 15px; height: 15px;
+  background: var(--garnet);
+  border: 1.5px solid var(--ink);
+  border-radius: 0;
+}
+input[type=range]:focus-visible::-webkit-slider-thumb { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+/* segmented control for fabric count + page size */
+.seg { display: flex; flex-wrap: wrap; gap: 0; }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg label {
+  font-family: "Courier Prime", monospace;
+  font-size: 0.84rem;
+  font-weight: 700;
+  padding: 0.46rem 0.8rem;
+  border: 1.5px solid var(--ink);
+  margin-right: -1.5px;
+  cursor: pointer;
+  background: transparent;
+  transition: background 0.15s, color 0.15s;
+  user-select: none;
+}
+.seg label:hover { background: rgba(151, 11, 35, 0.08); }
+.seg input:checked + label {
+  background: var(--ink);
+  color: var(--paper);
+}
+.seg input:focus-visible + label { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+/* ------------------------------- estimate ------------------------------ */
+
+.est {
+  font-family: "Courier Prime", monospace;
+  font-size: 0.84rem;
+  border: 1.5px solid var(--ink);
+  background: var(--paper-deep);
+}
+.est div {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem 0.8rem;
+}
+.est div + div { border-top: 1px dashed var(--rule); }
+.est dt, .est span:first-child { color: var(--ink-soft); }
+.est span:last-child { font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* --------------------------------- run --------------------------------- */
+
+.go {
+  width: 100%;
+  font-family: "Fraunces", Georgia, serif;
+  font-size: 1.12rem;
+  font-weight: 600;
+  color: var(--paper);
+  background: var(--garnet);
+  border: 1.5px solid var(--ink);
+  box-shadow: 4px 4px 0 var(--shadow);
+  padding: 0.85rem 1rem;
+  cursor: pointer;
+  transition: transform 0.12s, box-shadow 0.12s, background 0.15s;
+  margin-top: 1.5rem;
+}
+.go:hover:not(:disabled) {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 var(--shadow);
+}
+.go:active:not(:disabled) {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 var(--shadow);
+}
+.go:disabled {
+  background: var(--ink-faint);
+  cursor: not-allowed;
+  box-shadow: 2px 2px 0 var(--shadow);
+  opacity: 0.75;
+}
+.go:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+
+/* ------------------------------- progress ------------------------------ */
+
+.status {
+  font-family: "Courier Prime", monospace;
+  font-size: 0.82rem;
+  margin-top: 1rem;
+  min-height: 1.3em;
+  color: var(--ink-soft);
+}
+.status .spin {
+  display: inline-block;
+  color: var(--garnet);
+  font-weight: 700;
+}
+.status.err { color: var(--garnet); font-weight: 700; }
+
+.bar {
+  height: 6px;
+  border: 1.5px solid var(--ink);
+  margin-top: 0.6rem;
+  overflow: hidden;
+  display: none;
+}
+.bar.show { display: block; }
+.bar i {
+  display: block;
+  height: 100%;
+  background: repeating-linear-gradient(
+    45deg, var(--garnet) 0 6px, var(--gold) 6px 12px
+  );
+  background-size: 200% 100%;
+  animation: march 0.7s linear infinite;
+  width: 100%;
+}
+@keyframes march { to { background-position: -24px 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .bar i { animation: none; }
+  .go, .drop { transition: none; }
+}
+
+/* -------------------------------- result ------------------------------- */
+
+.result { display: none; margin-top: 1.4rem; }
+.result.show { display: block; animation: rise 0.4s ease-out both; }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+
+.dl {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  text-decoration: none;
+  color: var(--ink);
+  background: var(--gold);
+  border: 1.5px solid var(--ink);
+  box-shadow: 4px 4px 0 var(--shadow);
+  padding: 0.8rem 1rem;
+  font-weight: 600;
+  transition: transform 0.12s, box-shadow 0.12s;
+}
+.dl:hover { transform: translate(-2px, -2px); box-shadow: 6px 6px 0 var(--shadow); }
+.dl .sz {
+  font-family: "Courier Prime", monospace;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+.dl + .dl { margin-top: 0.6rem; }
+.dl.csv { background: transparent; }
+
+.summary {
+  font-family: "Courier Prime", monospace;
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--paper-deep);
+  border: 1.5px solid var(--ink);
+  padding: 0.8rem;
+  margin: 0 0 1rem;
+  max-height: 15rem;
+  overflow: auto;
+  line-height: 1.5;
+}
+
+/* -------------------------------- footer ------------------------------- */
+
+footer {
+  margin-top: 3.5rem;
+  padding-top: 1.2rem;
+  border-top: 2px solid var(--ink);
+  font-family: "Courier Prime", monospace;
+  font-size: 0.75rem;
+  color: var(--ink-faint);
+  line-height: 1.7;
+}
+footer .swatches { display: flex; gap: 0; margin-bottom: 0.9rem; }
+footer .swatches i {
+  width: 26px; height: 13px;
+  border: 1.5px solid var(--ink);
+  margin-right: -1.5px;
+}
+
+.noscript {
+  border: 1.5px solid var(--garnet);
+  background: #fff;
+  padding: 1rem;
+  font-family: "Courier Prime", monospace;
+  font-size: 0.85rem;
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <p class="eyebrow">Counted thread work · DMC stranded cotton</p>
+    <h1>Chartify<span class="x">✗</span></h1>
+    <p class="lede">
+      Turn any picture into a <strong>printable cross-stitch chart</strong> —
+      symbol pages, a colour key, a shopping list and a finished preview,
+      collated into one PDF booklet.
+    </p>
+    <p class="lede" style="margin-top:0.6rem;font-size:0.92rem;">
+      Runs entirely in this browser. Your picture is never uploaded anywhere.
+    </p>
+    <div class="masthead-rule">
+      <span class="sw" style="background:var(--garnet)"></span>
+      <span class="sw" style="background:var(--gold)"></span>
+      <span class="sw" style="background:var(--pine)"></span>
+      <span class="line"></span>
+    </div>
+  </header>
+
+  <noscript>
+    <div class="noscript">
+      This tool needs JavaScript and WebAssembly — the whole chart engine runs
+      in your browser.
+    </div>
+  </noscript>
+
+  <div class="cols">
+
+    <!-- ------------------------ left: input ------------------------ -->
+    <div>
+      <section class="card">
+        <h2>1 · The picture</h2>
+
+        <div class="drop" id="drop" tabindex="0" role="button"
+             aria-label="Choose an image file, or drop one here">
+          <span class="drop-icon" aria-hidden="true">✗ ✗ ✗</span>
+          <span class="drop-main" id="dropMain">Drop an image here</span>
+          <span class="drop-sub" id="dropSub">or click to choose · JPG, PNG, WEBP</span>
+          <input type="file" id="file" accept="image/*">
+        </div>
+
+        <div class="thumb-row" id="thumbRow">
+          <img id="thumb" alt="">
+          <div class="thumb-meta">
+            <div class="thumb-name" id="thumbName"></div>
+            <div class="thumb-dims" id="thumbDims"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>2 · Size &amp; threads</h2>
+
+        <div class="field">
+          <div class="field-head">
+            <label for="width">Width in stitches</label>
+            <span class="readout" id="widthOut">200</span>
+          </div>
+          <input type="range" id="width" min="40" max="400" step="10" value="200">
+          <p class="hint">
+            The height follows your picture's proportions. More stitches means
+            finer detail — and a much bigger job.
+          </p>
+        </div>
+
+        <div class="field">
+          <div class="field-head">
+            <label for="colors">Thread colours</label>
+            <span class="readout" id="colorsOut">60</span>
+          </div>
+          <input type="range" id="colors" min="5" max="163" step="1" value="60">
+          <p class="hint">
+            The most a chart can use is 163 — one for every symbol in the
+            alphabet. Fewer colours are quicker to stitch and cheaper to buy.
+          </p>
+        </div>
+
+        <div class="field">
+          <div class="field-head">
+            <label>Fabric count</label>
+            <span class="readout" id="countOut">14-count</span>
+          </div>
+          <div class="seg" id="countSeg" role="radiogroup" aria-label="Fabric count">
+            <input type="radio" name="count" id="c11" value="11"><label for="c11">11</label>
+            <input type="radio" name="count" id="c14" value="14" checked><label for="c14">14</label>
+            <input type="radio" name="count" id="c16" value="16"><label for="c16">16</label>
+            <input type="radio" name="count" id="c18" value="18"><label for="c18">18</label>
+            <input type="radio" name="count" id="c22" value="22"><label for="c22">22</label>
+          </div>
+          <p class="hint">
+            Stitches per inch of your aida or evenweave. Only changes the
+            finished measurements, not the chart itself.
+          </p>
+        </div>
+
+        <div class="field">
+          <div class="field-head">
+            <label>Paper size</label>
+          </div>
+          <div class="seg" id="pageSeg" role="radiogroup" aria-label="Paper size">
+            <input type="radio" name="page" id="pLetter" value="letter" checked><label for="pLetter">US Letter</label>
+            <input type="radio" name="page" id="pA4" value="a4"><label for="pA4">A4</label>
+            <input type="radio" name="page" id="pNone" value="none"><label for="pNone">Fit to chart</label>
+          </div>
+          <p class="hint">
+            Print at actual size, with no scaling, so the squares come out the
+            size they were designed to be.
+          </p>
+        </div>
+      </section>
+    </div>
+
+    <!-- ------------------------ right: output ----------------------- -->
+    <div>
+      <section class="card">
+        <h2>3 · Make the booklet</h2>
+
+        <div class="est" id="est">
+          <div><span>Stitch grid</span><span id="estGrid">—</span></div>
+          <div><span>Total stitches</span><span id="estTotal">—</span></div>
+          <div><span>Finished size</span><span id="estSize">—</span></div>
+          <div><span>Chart pages</span><span id="estPages">—</span></div>
+        </div>
+
+        <button class="go" id="go" disabled>Choose a picture first</button>
+
+        <div class="bar" id="bar"><i></i></div>
+        <p class="status" id="status">
+          The Python chart engine loads on first use — about 19&nbsp;MB, then
+          cached.
+        </p>
+
+        <div class="result" id="result">
+          <pre class="summary" id="summary"></pre>
+          <div id="downloads"></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>What you get</h2>
+        <p style="margin:0 0 0.7rem;font-size:0.92rem;color:var(--ink-soft)">
+          One PDF, in reading order:
+        </p>
+        <ol style="margin:0;padding-left:1.3rem;font-size:0.9rem;color:var(--ink-soft);line-height:1.75">
+          <li><strong style="color:var(--ink)">Cover</strong> — thread list in the order you'll use them</li>
+          <li><strong style="color:var(--ink)">Preview</strong> — what the finished piece should look like</li>
+          <li><strong style="color:var(--ink)">Shopping list</strong> — by DMC number, for the shop</li>
+          <li><strong style="color:var(--ink)">Key</strong> — symbol → thread, with swatches</li>
+          <li><strong style="color:var(--ink)">Page map</strong> — how the sheets fit together</li>
+          <li><strong style="color:var(--ink)">Chart pages</strong> — with faded edges showing the neighbouring sheets</li>
+        </ol>
+        <p class="hint" style="margin-top:1rem">
+          Plus two CSVs: every stitch as a symbol, and the thread list with
+          skein estimates.
+        </p>
+      </section>
+    </div>
+  </div>
+
+  <footer>
+    <div class="swatches">
+      <i style="background:#970b23"></i><i style="background:#d0a53e"></i>
+      <i style="background:#83975f"></i><i style="background:#1c5066"></i>
+      <i style="background:#1e1108"></i><i style="background:#f0eada"></i>
+    </div>
+    Colours matched in CIELAB against the DMC stranded cotton range.<br>
+    Python, NumPy and Pillow running in your browser under WebAssembly —
+    nothing is sent to a server.
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  const $ = (id) => document.getElementById(id);
+
+  const els = {
+    drop: $("drop"), file: $("file"),
+    dropMain: $("dropMain"), dropSub: $("dropSub"),
+    thumbRow: $("thumbRow"), thumb: $("thumb"),
+    thumbName: $("thumbName"), thumbDims: $("thumbDims"),
+    width: $("width"), widthOut: $("widthOut"),
+    colors: $("colors"), colorsOut: $("colorsOut"),
+    countOut: $("countOut"),
+    go: $("go"), bar: $("bar"), status: $("status"),
+    result: $("result"), summary: $("summary"), downloads: $("downloads"),
+    estGrid: $("estGrid"), estTotal: $("estTotal"),
+    estSize: $("estSize"), estPages: $("estPages"),
+  };
+
+  // Keeps the source image's natural dimensions so we can predict the grid.
+  let picked = null;       // { bytes, name, w, h }
+  let busy = false;
+  let objectUrls = [];     // revoked between runs so blobs aren't leaked
+
+  /* ----------------------------- helpers ----------------------------- */
+
+  const fmt = (n) => n.toLocaleString("en-US");
+
+  function mb(bytes) {
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + " KB";
+    return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+  }
+
+  function selected(name) {
+    const el = document.querySelector(`input[name="${name}"]:checked`);
+    return el ? el.value : null;
+  }
+
+  /* --------------------------- live estimate -------------------------- */
+
+  /* Mirrors chartify's own geometry: width drives the grid, height follows
+   * the source aspect, pages are 5x5 big squares of 10 stitches = 50x50. */
+  function updateEstimate() {
+    const w = parseInt(els.width.value, 10);
+    const colors = parseInt(els.colors.value, 10);
+    const count = parseInt(selected("count"), 10);
+
+    els.widthOut.textContent = fmt(w);
+    els.colorsOut.textContent = colors;
+    els.countOut.textContent = count + "-count";
+
+    if (!picked) {
+      els.estGrid.textContent = els.estTotal.textContent =
+        els.estSize.textContent = els.estPages.textContent = "—";
+      return;
+    }
+
+    const h = Math.max(1, Math.round(w * picked.h / picked.w));
+    const per = 50;  // 5 squares x 10 stitches
+    const across = Math.ceil(w / per), down = Math.ceil(h / per);
+
+    els.estGrid.textContent = `${fmt(w)} × ${fmt(h)}`;
+    els.estTotal.textContent = fmt(w * h);
+    els.estSize.textContent =
+      `${(w / count).toFixed(1)}" × ${(h / count).toFixed(1)}"`;
+    // +5 front-matter sheets, matching the booklet the engine writes.
+    els.estPages.textContent =
+      `${across * down} + 5  (${across}×${down})`;
+  }
+
+  /* ------------------------------ picking ----------------------------- */
+
+  function acceptFile(f) {
+    if (!f) return;
+    if (!/^image\//.test(f.type)) {
+      setStatus("That doesn't look like an image file.", true);
+      return;
+    }
+    const url = URL.createObjectURL(f);
+    const img = new Image();
+    img.onload = () => {
+      picked = { file: f, name: f.name, w: img.naturalWidth, h: img.naturalHeight };
+      els.thumb.src = url;   // kept alive for the thumbnail
+      els.thumb.alt = "Chosen picture: " + f.name;
+      els.thumbName.textContent = f.name;
+      els.thumbDims.textContent =
+        `${fmt(img.naturalWidth)} × ${fmt(img.naturalHeight)} px · ${mb(f.size)}`;
+      els.thumbRow.classList.add("show");
+      els.drop.classList.add("has-file");
+      els.dropMain.textContent = "Picture chosen";
+      els.dropSub.textContent = "click to choose a different one";
+      els.go.disabled = busy;
+      els.go.textContent = "Make my chart booklet";
+      setStatus("Ready. The engine loads on first run — about 19 MB, then cached.");
+      updateEstimate();
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      setStatus("That image couldn't be read. Try a JPG or PNG.", true);
+    };
+    img.src = url;
+  }
+
+  els.drop.addEventListener("click", () => els.file.click());
+  els.drop.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); els.file.click(); }
+  });
+  els.file.addEventListener("change", (e) => acceptFile(e.target.files[0]));
+
+  ["dragenter", "dragover"].forEach(t =>
+    els.drop.addEventListener(t, (e) => {
+      e.preventDefault(); els.drop.classList.add("over");
+    }));
+  ["dragleave", "drop"].forEach(t =>
+    els.drop.addEventListener(t, (e) => {
+      e.preventDefault(); els.drop.classList.remove("over");
+    }));
+  els.drop.addEventListener("drop", (e) => {
+    const f = e.dataTransfer && e.dataTransfer.files[0];
+    acceptFile(f);
+  });
+
+  els.width.addEventListener("input", updateEstimate);
+  els.colors.addEventListener("input", updateEstimate);
+  document.querySelectorAll('input[name="count"]').forEach(r =>
+    r.addEventListener("change", updateEstimate));
+
+  /* ------------------------------ status ------------------------------ */
+
+  let spinTimer = null;
+  const FRAMES = ["✗ · ·", "· ✗ ·", "· · ✗", "· ✗ ·"];
+
+  function setStatus(text, isError) {
+    stopSpin();
+    els.status.textContent = text;
+    els.status.classList.toggle("err", !!isError);
+  }
+
+  function setWorking(text) {
+    els.status.classList.remove("err");
+    let i = 0;
+    stopSpin();
+    const paint = () => {
+      els.status.innerHTML =
+        `<span class="spin">${FRAMES[i++ % FRAMES.length]}</span>  ` +
+        text.replace(/[<&]/g, c => c === "<" ? "&lt;" : "&amp;");
+    };
+    paint();
+    if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      spinTimer = setInterval(paint, 320);
+    }
+  }
+
+  function stopSpin() {
+    if (spinTimer) { clearInterval(spinTimer); spinTimer = null; }
+  }
+
+  /* ------------------------------ worker ------------------------------ */
+
+  let worker = null;
+
+  function ensureWorker() {
+    if (worker) return worker;
+    worker = new Worker("worker.js");
+    worker.onmessage = (e) => {
+      const m = e.data;
+      if (m.type === "status")      setWorking(m.message);
+      else if (m.type === "ready")  { /* boot finished; a run may follow */ }
+      else if (m.type === "done")   finish(m.result);
+      else if (m.type === "error" || m.type === "fatal") fail(m.message);
+    };
+    worker.onerror = (e) => fail(e.message || "the chart engine crashed");
+    return worker;
+  }
+
+  function fail(message) {
+    busy = false;
+    els.bar.classList.remove("show");
+    els.go.disabled = !picked;
+    els.go.textContent = "Try again";
+    setStatus("Failed: " + message, true);
+  }
+
+  function finish(result) {
+    busy = false;
+    els.bar.classList.remove("show");
+    els.go.disabled = false;
+    els.go.textContent = "Make another";
+    setStatus(`Done in ${result.seconds}s.`);
+
+    els.summary.textContent = (result.log || "").trim();
+
+    objectUrls.forEach(URL.revokeObjectURL);
+    objectUrls = [];
+    els.downloads.innerHTML = "";
+
+    const base = picked
+      ? picked.name.replace(/\.[^.]+$/, "").replace(/[^\w-]+/g, "-")
+      : "chart";
+
+    // PDF first — it is the actual deliverable — then the CSVs.
+    const order = result.files.slice().sort((a, b) =>
+      (a.name.endsWith(".pdf") ? 0 : 1) - (b.name.endsWith(".pdf") ? 0 : 1));
+
+    for (const f of order) {
+      const isPdf = f.name.endsWith(".pdf");
+      const blob = new Blob([f.buffer], {
+        type: isPdf ? "application/pdf" : "text/csv",
+      });
+      const url = URL.createObjectURL(blob);
+      objectUrls.push(url);
+
+      const a = document.createElement("a");
+      a.className = "dl" + (isPdf ? "" : " csv");
+      a.href = url;
+      a.download = f.name.replace(/^chart/, base);
+      const label = isPdf
+        ? "⬇  Download the booklet (PDF)"
+        : "⬇  " + f.name.replace(/^chart-/, "").replace(/\.csv$/, "") + " (CSV)";
+      a.innerHTML =
+        `<span>${label}</span><span class="sz">${mb(f.size)}</span>`;
+      els.downloads.appendChild(a);
+    }
+
+    els.result.classList.add("show");
+  }
+
+  /* -------------------------------- run ------------------------------- */
+
+  els.go.addEventListener("click", async () => {
+    if (!picked || busy) return;
+    busy = true;
+    els.go.disabled = true;
+    els.go.textContent = "Working…";
+    els.result.classList.remove("show");
+    els.bar.classList.add("show");
+    setWorking("Starting up…");
+
+    let bytes;
+    try {
+      bytes = await picked.file.arrayBuffer();
+    } catch (err) {
+      fail("couldn't read that file"); return;
+    }
+
+    ensureWorker().postMessage({
+      type: "generate",
+      imageBytes: bytes,
+      filename: picked.name,
+      widthStitches: parseInt(els.width.value, 10),
+      colors: parseInt(els.colors.value, 10),
+      count: parseInt(selected("count"), 10),
+      pageSize: selected("page"),
+    }, [bytes]);
+  });
+
+  updateEstimate();
+})();
+</script>
+</body>
+</html>

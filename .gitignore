@@ -1,0 +1,26 @@
+# Source images stay local. The app needs none of them -- the CLI and the web
+# page both work on whatever picture you point them at -- and this repo is
+# public, so personal photos and third-party artwork are deliberately kept out
+# of it. The web app's own assets under web/ are committed explicitly below.
+*.jpg
+*.jpeg
+*.png
+!web/favicon.png
+
+# Generated charts: each run writes a dated folder, tens of MB of PDF.
+*-chart-*/
+test-out-*/
+page1-rebuild/
+
+# Built site (recreated by `task build` and by the Pages workflow).
+dist/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS noise
+.DS_Store
+Thumbs.db
