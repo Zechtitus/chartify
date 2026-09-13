@@ -142,8 +142,15 @@ paper size — and leaves the rest at their defaults.
 ```sh
 task deps      # check numpy / Pillow / fonttools are present
 task serve     # web app
+task unittest  # run the test suite
 task smoke     # generate a small chart to prove the engine works
 ```
+
+The suite covers the parts that would corrupt a chart silently: the CIEDE2000
+colour metric against its published reference vectors, page geometry, the
+parsers, and both PDF writers. It runs in parallel when `pytest-xdist` is
+installed (`sudo apt install python3-pytest-xdist`) — about 12s across 12
+cores versus 32s serially — and serially otherwise.
 
 Requires Python 3, NumPy and Pillow (`fonttools` is optional — it verifies
 glyph coverage). `task serve` is needed rather than opening

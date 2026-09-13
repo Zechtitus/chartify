@@ -185,6 +185,51 @@ tasks:
         PY
     silent: true
 
+  unittest:
+    desc: Run the unit tests (named, and in parallel when xdist is available)
+    summary: |
+      Runs the pytest suite in test_chartify.py, listing each test name and
+      its result rather than a row of dots.
+
+      Runs across all cores when pytest-xdist is installed:
+        sudo apt install python3-pytest-xdist
+      Without it the suite still runs, just serially.
+
+      Pass pytest arguments after -- (this replaces the defaults):
+        task unittest -- -k ciede2000 -v
+        task unittest -- -x --durations=5
+        task unittest -- -p no:randomly -q
+    cmds:
+      - |
+        if ! python3 -c "import pytest" 2>/dev/null; then
+          echo "pytest is not installed. Install it with:" >&2
+          echo "  sudo apt install python3-pytest" >&2
+          exit 1
+        fi
+        if [ -n "{{.CLI_ARGS}}" ]; then
+          exec python3 -m pytest test_chartify.py {{.CLI_ARGS}}
+        fi
+        # -v names every test; -ra summarises anything not passing.
+        opts="-v -ra --durations=5"
+        if python3 -c "import xdist" 2>/dev/null; then
+          # Default per-test distribution, NOT --dist loadfile: the whole
+          # suite is one file, so loadfile puts everything on one worker and
+          # saves nothing (measured: 33s either way, vs 12s spread per test).
+          # The module-scoped image fixture is cheap to rebuild per worker.
+          opts="$opts -n auto"
+        else
+          echo "note: pytest-xdist not installed — running serially."
+          echo "      sudo apt install python3-pytest-xdist  # to parallelise"
+          echo
+        fi
+        exec python3 -m pytest test_chartify.py $opts
+    silent: true
+
+  test:
+    desc: Alias for unittest
+    cmds:
+      - task: unittest
+
   smoke:
     desc: Generate a small chart natively to confirm the engine works
     cmds:
