@@ -623,6 +623,104 @@ def render_tile(matrix: np.ndarray, palette: list[Thread], *,
     return img
 
 
+def write_pdf_streaming(pages: list[Path], out: Path, *, dpi: int,
+                        quality: int = 85) -> None:
+    """Write a multi-page PDF one page at a time.
+
+    Pillow's own `save(save_all=True, append_images=...)` decodes and holds
+    every page for the whole write: 40 Letter sheets at 300dpi peaked at
+    ~1.3GB here, which overruns the heap in a memory-capped environment and
+    surfaces as `MemoryError` mid-save. Neither spooling the pages to disk
+    nor handing it pre-encoded JPEGs avoids that -- it decodes them anyway.
+
+    So the container is written directly. Each page becomes a JPEG-compressed
+    /DCTDecode image XObject, encoded and released before the next page is
+    read, which holds peak memory to a single page (~87MB for the same 40
+    sheets). The structure is deliberately plain: one Page plus one Image
+    plus one content stream per sheet, and a classic xref table.
+
+    `dpi` sets the physical page size: a 2550x3300 pixel sheet at 300dpi
+    becomes 612x792pt, i.e. Letter.
+    """
+    import io
+
+    offsets: dict[int, int] = {}
+
+    with open(out, "wb") as fh:
+        # The binary comment marks the file as containing 8-bit data.
+        fh.write(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+
+        def emit(num: int, body: bytes) -> None:
+            offsets[num] = fh.tell()
+            fh.write(f"{num} 0 obj\n".encode("ascii"))
+            fh.write(body)
+            fh.write(b"\nendobj\n")
+
+        count = len(pages)
+        # Object numbering: 1 Catalog, 2 Pages, then three per sheet
+        # (Page, Image, Contents) so each sheet's numbers are predictable.
+        page_num = lambda i: 3 + 3 * i          # noqa: E731
+        kids = " ".join(f"{page_num(i)} 0 R" for i in range(count))
+
+        emit(1, b"<< /Type /Catalog /Pages 2 0 R >>")
+        emit(2, f"<< /Type /Pages /Count {count} /Kids [{kids}] >>"
+                .encode("ascii"))
+
+        for i, path in enumerate(pages):
+            with Image.open(path) as src:
+                page = src.convert("RGB")
+                width, height = page.size
+                buf = io.BytesIO()
+                page.save(buf, "JPEG", quality=quality)
+                page.close()
+            jpeg = buf.getvalue()
+            buf.close()
+
+            pt_w = width * 72.0 / dpi
+            pt_h = height * 72.0 / dpi
+            p_n = page_num(i)
+            img_n, cont_n = p_n + 1, p_n + 2
+
+            emit(p_n, (
+                f"<< /Type /Page /Parent 2 0 R "
+                f"/MediaBox [0 0 {pt_w:.2f} {pt_h:.2f}] "
+                f"/Resources << /XObject << /Im0 {img_n} 0 R >> "
+                f"/ProcSet [/PDF /ImageC] >> "
+                f"/Contents {cont_n} 0 R >>").encode("ascii"))
+
+            # The image stream is written straight out rather than built as
+            # one bytes object, so the JPEG is the only page-sized thing
+            # resident.
+            offsets[img_n] = fh.tell()
+            fh.write(f"{img_n} 0 obj\n".encode("ascii"))
+            fh.write((
+                f"<< /Type /XObject /Subtype /Image /Width {width} "
+                f"/Height {height} /ColorSpace /DeviceRGB "
+                f"/BitsPerComponent 8 /Filter /DCTDecode "
+                f"/Length {len(jpeg)} >>\nstream\n").encode("ascii"))
+            fh.write(jpeg)
+            fh.write(b"\nendstream\nendobj\n")
+            del jpeg
+
+            # Scale the unit image up to the full page box.
+            content = (f"q {pt_w:.2f} 0 0 {pt_h:.2f} 0 0 cm /Im0 Do Q"
+                       .encode("ascii"))
+            emit(cont_n, b"<< /Length %d >>\nstream\n" % len(content)
+                 + content + b"\nendstream")
+
+        start_xref = fh.tell()
+        highest = max(offsets)
+        fh.write(f"xref\n0 {highest + 1}\n".encode("ascii"))
+        fh.write(b"0000000000 65535 f \n")
+        for num in range(1, highest + 1):
+            if num in offsets:
+                fh.write(f"{offsets[num]:010d} 00000 n \n".encode("ascii"))
+            else:
+                fh.write(b"0000000000 00000 f \n")
+        fh.write((f"trailer\n<< /Size {highest + 1} /Root 1 0 R >>\n"
+                  f"startxref\n{start_xref}\n%%EOF\n").encode("ascii"))
+
+
 def add_binder_margin(img: Image.Image, *, inches: float, dpi: int) -> Image.Image:
     """Pad a blank strip onto the left edge for hole-punching.
 
@@ -1770,7 +1868,15 @@ def main(argv: list[str] | None = None) -> int:
 
     ext = args.format
     written = []
-    booklet: list[Image.Image] = []
+    # PDF pages are spooled to disk as they are finished rather than held in
+    # a list. A Letter sheet at 300dpi is 2550x3300 RGB -- about 25MB -- so a
+    # 40-page booklet would need ~1GB resident before the first byte was
+    # written, which overruns the heap in a memory-capped environment (the
+    # browser/WASM build hits MemoryError inside the LANCZOS resize). Spooling
+    # keeps peak usage at roughly one page, and Pillow reopens the spooled
+    # files lazily at save time.
+    booklet: list[Path] = []
+    spool = outdir / ".pages"
     save_opts = {"quality": 95} if ext == "jpg" else {}
     save_opts["dpi"] = (args.dpi, args.dpi)
 
@@ -1784,7 +1890,12 @@ def main(argv: list[str] | None = None) -> int:
         # A single multi-page PDF is the booklet; per-sheet files would just
         # be one-page duplicates of pages already collated in it.
         if ext == "pdf":
-            booklet.append(art)
+            spool.mkdir(parents=True, exist_ok=True)
+            # PNG keeps the page pixel-exact, so spooling cannot alter output.
+            page_path = spool / f"{len(booklet):04d}.png"
+            art.save(page_path, "PNG", compress_level=1)
+            booklet.append(page_path)
+            art.close()
             return None
         path = outdir / name
         art.save(path, **save_opts)
@@ -1845,8 +1956,38 @@ def main(argv: list[str] | None = None) -> int:
 
     if ext == "pdf":
         pdf_path = outdir / f"{args.prefix}.pdf"
-        booklet[0].save(pdf_path, save_all=True, append_images=booklet[1:],
-                        resolution=args.dpi)
+        # Reopen the spooled pages lazily. Pillow reads each appended image
+        # as it writes it, so only the first page plus the one being encoded
+        # are resident -- the whole point of spooling above.
+        # Pillow's writer holds every page decoded and resident -- about
+        # 25MB per Letter sheet at 300dpi -- so it needs over a gigabyte for
+        # a large booklet. Past a modest page count the streaming writer is
+        # used instead: it produces the same pages (both JPEG-encode the
+        # sheets) while keeping peak memory to a single page.
+        PILLOW_PAGE_LIMIT = 12
+        try:
+            if len(booklet) > PILLOW_PAGE_LIMIT:
+                write_pdf_streaming(booklet, pdf_path, dpi=args.dpi)
+            else:
+                first = Image.open(booklet[0])
+                rest = [Image.open(p) for p in booklet[1:]]
+                try:
+                    first.save(pdf_path, save_all=True, append_images=rest,
+                               resolution=args.dpi)
+                finally:
+                    first.close()
+                    for im in rest:
+                        im.close()
+        except MemoryError:
+            # Small booklet, but still no headroom -- fall back regardless.
+            print("  note: not enough memory to collate the booklet at once; "
+                  "writing it a page at a time")
+            write_pdf_streaming(booklet, pdf_path, dpi=args.dpi)
+        finally:
+            # The spool is an implementation detail; don't leave it behind.
+            for p in booklet:
+                p.unlink(missing_ok=True)
+            spool.rmdir()
         written = [pdf_path]
 
     # Machine-readable symbol matrix.
